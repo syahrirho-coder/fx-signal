@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>fx-signal terminal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Doto:wght@400;900&family=Martian+Mono:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#120d07;--panel:#1a130b;--ink:#ffb454;--hi:#ffe2a8;--dim:#9b7a4a;--line:#3a2b16;--buy:#8ee8a8;--sell:#ff6f61}
+*{box-sizing:border-box}
+html{background:var(--bg)}
+body{margin:0;min-height:100vh;color:var(--ink);font:13px/1.7 'Martian Mono',ui-monospace,Menlo,Consolas,monospace;
+  background:radial-gradient(120% 60% at 50% 0%,#2e1f0c 0,var(--bg) 62%)}
+body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:9;
+  background:repeating-linear-gradient(0deg,rgba(0,0,0,.25) 0 1px,transparent 1px 3px)}
+.wrap{max-width:960px;margin:0 auto;padding:calc(28px + env(safe-area-inset-top,0px)) 18px calc(80px + env(safe-area-inset-bottom,0px))}
+h1{font-family:'Doto','Martian Mono',monospace;font-weight:900;font-size:clamp(52px,14vw,118px);line-height:.9;margin:0;
+  color:var(--hi);text-shadow:0 0 22px rgba(255,180,84,.5)}
+h2{font-family:'Doto','Martian Mono',monospace;font-weight:900;font-size:26px;margin:44px 0 10px;color:var(--hi)}
+.sub{color:var(--dim);margin:10px 0 0;max-width:62ch}
+#boot{margin:26px 0 0;min-height:7.2em;color:var(--dim);white-space:pre-wrap}
+#boot b{color:var(--ink);font-weight:400}
+.bar{display:flex;flex-wrap:wrap;gap:6px 26px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:10px 0;margin-top:22px}
+.bar span{color:var(--dim)} .bar b{color:var(--hi);font-weight:600}
+.cursor{display:inline-block;width:.6em;height:1.1em;background:var(--ink);vertical-align:-.2em;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.sig{border-left:2px solid var(--line);padding:2px 0 2px 14px;margin:0 0 18px}
+.sig.up{border-color:var(--buy)} .sig.dn{border-color:var(--sell)}
+.sig .t{color:var(--hi)} .sig .m{color:var(--dim)}
+.buy{color:var(--buy)} .sell{color:var(--sell)}
+.tr{display:flex;flex-wrap:wrap;gap:2px 18px;margin-top:4px}
+.live{margin-left:8px;color:var(--bg);background:var(--ink);padding:0 6px}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{border-collapse:collapse;width:100%;min-width:640px}
+th{font-weight:400;color:var(--dim);text-align:left;border-bottom:1px solid var(--line);padding:6px 10px 6px 0}
+td{padding:6px 10px 6px 0;border-bottom:1px dashed #2a1f10;vertical-align:top}
+tr.past td{opacity:.45}
+.empty{color:var(--dim)}
+.foot{margin-top:56px;color:var(--dim);max-width:70ch}
+a{color:var(--ink)}
+@media (prefers-reduced-motion:reduce){.cursor{animation:none}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <h1>fx-signal</h1>
+  <p class="sub">Sinyal forex dari kalender ekonomi dunia dan AS. Setiap sinyal baru langsung dikirim ke Telegram.</p>
+  <div id="boot" aria-live="polite"></div>
+
+  <div class="bar" id="bar" hidden>
+    <div><span>sumber </span><b id="src">-</b></div>
+    <div><span>event </span><b id="cnt">-</b></div>
+    <div><span>rilis berikutnya </span><b id="next">-</b></div>
+  </div>
+
+  <h2>sinyal</h2>
+  <div id="sigs"><span class="empty">memuat...</span></div>
+
+  <h2>kalender</h2>
+  <div class="scroll"><table id="cal" hidden>
+    <thead><tr><th>waktu</th><th>cur</th><th>event</th><th>actual</th><th>forecast</th><th>prev</th><th>bias</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+
+  <p class="foot">Bukan saran keuangan. Sinyal dihitung dari selisih actual vs forecast (atau forecast vs previous sebelum rilis) dan tidak menjamin arah harga. Pakai stop loss dan risiko kecil per posisi.</p>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
+const reduce = matchMedia('(prefers-reduced-motion:reduce)').matches;
+const time = d => new Date(d).toLocaleString('id-ID', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function boot(lines) {
+  const box = $('#boot'); box.textContent = '';
+  const cur = el('span', 'cursor');
+  for (const line of lines) {
+    const row = el('div'); box.appendChild(row); box.appendChild(cur);
+    if (reduce) { row.textContent = line; continue; }
+    for (const ch of line) { row.textContent += ch; await sleep(11); }
+    await sleep(110);
+  }
+  cur.remove();
+}
+
+function renderSignals(events) {
+  const box = $('#sigs'); box.textContent = '';
+  const list = events.filter(e => e.signal && new Date(e.date) > Date.now() - 36e5 * 6);
+  if (!list.length) { box.appendChild(el('span', 'empty', 'belum ada sinyal. Mesin menunggu rilis data high impact berikutnya.')); return; }
+  for (const e of list) {
+    const up = e.bias > 0, s = e.signal;
+    const d = el('div', 'sig ' + (up ? 'up' : 'dn'));
+    const head = el('div');
+    head.append(el('span', 't', `${e.currency} ${up ? 'menguat' : 'melemah'}`), el('span', 'm', `  ${s.mode === 'actual' ? 'setelah rilis' : 'pre-rilis'}, conf ${s.conf}%`));
+    if (s.due) head.appendChild(el('span', 'live', 'terkirim'));
+    d.append(head, el('div', 'm', `${e.title}, ${time(e.date)}`));
+    const tr = el('div', 'tr');
+    for (const t of s.trades) tr.appendChild(el('span', t.side === 'BUY' ? 'buy' : 'sell', `${t.side} ${t.pair}`));
+    d.appendChild(tr); box.appendChild(d);
+  }
+}
+
+function renderCalendar(events) {
+  const tb = $('#cal tbody'); tb.textContent = '';
+  for (const e of events) {
+    const tr = el('tr', new Date(e.date) < Date.now() ? 'past' : '');
+    const b = e.bias > 0 ? ['naik', 'buy'] : e.bias < 0 ? ['turun', 'sell'] : ['-', 'empty'];
+    [time(e.date), e.currency, e.title, e.actual ?? '-', e.forecast ?? '-', e.previous ?? '-'].forEach(v => tr.appendChild(el('td', '', v)));
+    tr.appendChild(el('td', b[1], b[0]));
+    tb.appendChild(tr);
+  }
+  $('#cal').hidden = false;
+}
+
+let nextAt = null;
+function tick() {
+  if (!nextAt) return;
+  const s = Math.max(0, Math.floor((nextAt - Date.now()) / 1000));
+  const h = String(Math.floor(s / 3600)).padStart(2, '0'), m = String(Math.floor(s % 3600 / 60)).padStart(2, '0'), x = String(s % 60).padStart(2, '0');
+  $('#next').textContent = `${h}:${m}:${x}`;
+}
+
+(async () => {
+  const fetching = fetch('/api/signals').then(r => r.json());
+  await boot(['> inisialisasi fx-signal', '> memuat kalender ekonomi...', '> menghitung bias mata uang...']);
+  try {
+    const data = await fetching;
+    if (data.error) throw new Error(data.error);
+    await boot(['> inisialisasi fx-signal', '> kalender ekonomi dimuat', '> bias mata uang siap']);
+    $('#src').textContent = data.source;
+    $('#cnt').textContent = data.events.length;
+    $('#bar').hidden = false;
+    const up = data.events.find(e => new Date(e.date) > Date.now());
+    nextAt = up ? new Date(up.date).getTime() : null;
+    renderSignals(data.events); renderCalendar(data.events);
+    tick(); setInterval(tick, 1000);
+  } catch (err) {
+    $('#boot').textContent = '> gagal memuat data: ' + err.message;
+    $('#sigs').textContent = '';
+    $('#sigs').appendChild(el('span', 'empty', 'periksa koneksi lalu muat ulang halaman.'));
+  }
+})();
+</script>
+</body>
+</html>
